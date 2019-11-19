@@ -38,9 +38,13 @@ class CrawlGcp:
         self._projects = projects
 
     def crawl(self):
+        projects = []
+        if self._organization:
+            projects += self._get_projects_by_organization()
         if self._projects:
-            projects = self._get_projects()
-        else:
+            projects += self._get_requested_projects()
+
+        if not projects:
             projects = self._get_all_projects()
         self._dump_json('projects', data=projects)
 
@@ -163,6 +167,76 @@ class CrawlGcp:
         except:
             raise HttpError(resp, content, uri=uri)
 
+    def _get_projects_by_organization(self):
+        projects = []
+        logger.info(f'Finding projects in organization {self._organization}...')
+
+        org_resource = f'organizations/{self._organization}'
+        resourcemanager_v1 = self._get_service('cloudresourcemanager', 'v1')
+        try:
+            response = resourcemanager_v1.organizations().get(name=org_resource).execute()
+        except HttpError as e:
+            if e.resp.status == 403:
+                logger.warning(f'Not allowed to crawl organization {self._organization}')
+            elif e.resp.status == 404:
+                logger.warning(f'Could not find organization {self._organization}')
+            else:
+                raise e
+            return projects
+        self._dump_json('organization', data=response)
+
+        folders = []
+        resourcemanager_v2 = self._get_service('cloudresourcemanager', 'v2')
+        try:
+            backlog = [org_resource]
+            while backlog:
+                next_item = backlog.pop(0)
+                next_page_token = None
+                while True:
+                    response = resourcemanager_v2.folders().list(parent=next_item, pageToken=next_page_token).execute()
+                    for folder in response.get('folders', []):
+                        if folder['lifecycleState'] == 'ACTIVE':
+                            folders.append(folder)
+                            backlog.append(folder['name'])
+                    if 'nextPageToken' in response:
+                        next_page_token = response['nextPageToken']
+                    else:
+                        break
+        except HttpError as e:
+            if e.resp.status == 403:
+                logger.warning(f'Not allowed to list folders in organization {self._organization}')
+            else:
+                raise e
+        self._dump_json('folders', data=folders)
+
+        filters = [
+            f'parent.type:organization parent.id:{self._organization}'
+        ]
+        for folder in folders:
+            folder_id = folder['name'].split('/')[1]
+            folder_filter = f'parent.type:folder parent.id:{folder_id}'
+            filters.append(folder_filter)
+
+        for resource_filter in filters:
+            try:
+                next_page_token = None
+                while True:
+                    response = resourcemanager_v1.projects().list(filter=resource_filter, pageToken=next_page_token).execute()
+                    for project in response.get('projects', []):
+                        if project['lifecycleState'] == 'ACTIVE':
+                            projects.append(project)
+                    if 'nextPageToken' in response:
+                        next_page_token = response['nextPageToken']
+                    else:
+                        break
+            except HttpError as e:
+                if e.resp.status == 403:
+                    logger.warning(f'Not allowed to list projects for filter {resource_filter}')
+                else:
+                    raise e
+        return projects
+
+
     def _get_all_projects(self):
         logger.info('Fetching all projects...')
         cloudresourcemanager = self._get_service('cloudresourcemanager', 'v1')
@@ -170,7 +244,7 @@ class CrawlGcp:
         projects = []
         while True:
             response = cloudresourcemanager.projects().list(pageToken=next_page_token).execute()
-            for project in response['projects']:
+            for project in response.get('projects', []):
                 if project['lifecycleState'] == 'ACTIVE':
                     projects.append(project)
             if 'nextPageToken' in response:
@@ -179,13 +253,13 @@ class CrawlGcp:
                 break
         return projects
 
-    def _get_projects(self):
+    def _get_requested_projects(self):
         logger.info(f'Fetching projects {self._projects}...')
         cloudresourcemanager = self._get_service('cloudresourcemanager', 'v1')
         projects = []
         for project in self._projects:
             response = cloudresourcemanager.projects().list(filter=f'name:{project}').execute()
-            for project in response['projects']:
+            for project in response.get('projects', []):
                 if project['lifecycleState'] == 'ACTIVE':
                     projects.append(project)
         return projects
