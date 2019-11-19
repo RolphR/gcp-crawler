@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from googleapiclient._auth import authorized_http
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -151,7 +152,7 @@ class CrawlGcp:
                 missing_resources.append(response)
                 self._resources[uri] = response
         logger.info(f'Done fetching missing resources')
-        self._dump_json('missing', method='resources', data=missing_resources)
+        self._dump_json('missing-resources', data=missing_resources)
 
     def _get_resource_by_uri(self, uri):
         resp, content = self._authorized_http.request(uri)
@@ -195,7 +196,7 @@ class CrawlGcp:
         if 'selfLink' in response:
             self._resources[response['selfLink']] = response
             self._collect_all_links(response)
-        self._dump_json(project, method='get', data=response)
+        self._dump_json(project, service='compute', method='get', data=response)
 
     def _dump_aggregated_list(self, service_name, version, method, project):
         data = self._get_aggregated_list(service_name, version, method, project)
@@ -204,7 +205,7 @@ class CrawlGcp:
                 if 'selfLink' in resource:
                     self._resources[resource['selfLink']] = resource
                     self._collect_all_links(resource)
-        self._dump_json(project, method=method, data=data)
+        self._dump_json(project, service='compute', method=method, data=data)
 
     def _get_aggregated_list(self, service_name, version, method, project):
         service = self._get_service(service_name, version)
@@ -229,7 +230,7 @@ class CrawlGcp:
             if 'selfLink' in resource:
                 self._resources[resource['selfLink']] = resource
                 self._collect_all_links(resource)
-        self._dump_json(project, method=method, data=data)
+        self._dump_json(project, service=service_name, method=method, data=data)
 
     def _get_list(self, service_name, version, method, project):
         service = self._get_service(service_name, version)
@@ -273,7 +274,7 @@ class CrawlGcp:
                 if key != 'constraint':
                     constraint[key] = value
             constraints[name] = constraint
-        self._dump_json(project_id, method='listEffectiveOrgPolicies', data=constraints)
+        self._dump_json(project_id, service='cloudresourcemanager', method='listEffectiveOrgPolicies', data=constraints)
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:
@@ -294,14 +295,26 @@ class CrawlGcp:
             elif type(value) in [dict, list]:
                 self._collect_all_links(value)
 
-    def _dump_json(self, project, data=None, method=None):
-        if method:
-            filename = f'{self._output_dir}/{project}-{method}.json'
+    def _dump_json(self, base_name, service=None, method=None, data=None):
+        if not data:
+            return
+        dirs = [self._output_dir]
+        if not service and not method:
+            filename = f'{base_name}.json'
+        elif service and not method:
+            dirs.append(base_name)
+            filename = f'{service}.json'
+        elif not service and method:
+            dirs.append(base_name)
+            filename = f'{method}.json'
         else:
-            filename = f'{self._output_dir}/{project}.json'
-        if data:
-            with open(filename, 'w') as f:
-                json.dump(data, f, sort_keys=True)
+            dirs += [base_name, service]
+            filename = f'{method}.json'
+
+        directory = os.path.join(*dirs)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, filename), 'w') as f:
+            json.dump(data, f, sort_keys=True)
 
     def _get_service(self, service, version):
         if service not in self._services:
