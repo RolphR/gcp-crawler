@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import json
 import logging
 import os
@@ -54,75 +52,78 @@ class CrawlGcp:
             i += 1
             project_id= project['projectId']
             logger.info(f'[{i}/{total}] Fetching resources for {project_id} ...')
-            #compute
-            try:
-                logger.info(f'Crawling compute for {project_id} ...')
-                self._dump_project_info(project_id)
-                self._dump_aggregated_list('compute', 'v1', 'acceleratorTypes', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'addresses', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'autoscalers', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'backendServices', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'disks', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'diskTypes', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'forwardingRules', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'globalOperations', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'instanceGroupManagers', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'instanceGroups', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'instances', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'interconnectAttachments', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'machineTypes', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'networkEndpointGroups', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'nodeGroups', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'nodeTemplates', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'nodeTypes', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'regionCommitments', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'reservations', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'resourcePolicies', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'routers', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'subnetworks', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'targetInstances', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'targetPools', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'targetVpnGateways', project_id)
-                self._dump_aggregated_list('compute', 'v1', 'vpnTunnels', project_id)
-
-                self._dump_list('compute', 'v1', 'backendBuckets', project_id)
-                self._dump_list('compute', 'v1', 'firewalls', project_id)
-                self._dump_list('compute', 'v1', 'globalAddresses', project_id)
-                self._dump_list('compute', 'v1', 'globalForwardingRules', project_id)
-                self._dump_list('compute', 'v1', 'healthChecks', project_id)
-                self._dump_list('compute', 'v1', 'httpHealthChecks', project_id)
-                self._dump_list('compute', 'v1', 'httpsHealthChecks', project_id)
-                self._dump_list('compute', 'v1', 'images', project_id)
-                self._dump_list('compute', 'v1', 'instanceTemplates', project_id)
-                self._dump_list('compute', 'v1', 'interconnectLocations', project_id)
-                self._dump_list('compute', 'v1', 'interconnects', project_id)
-                self._dump_list('compute', 'v1', 'licenses', project_id)
-                self._dump_list('compute', 'v1', 'networks', project_id)
-                self._dump_list('compute', 'v1', 'regions', project_id)
-                self._dump_list('compute', 'v1', 'routes', project_id)
-                self._dump_list('compute', 'v1', 'securityPolicies', project_id)
-                self._dump_list('compute', 'v1', 'snapshots', project_id)
-                self._dump_list('compute', 'v1', 'sslCertificates', project_id)
-                self._dump_list('compute', 'v1', 'sslPolicies', project_id)
-                self._dump_list('compute', 'v1', 'targetHttpProxies', project_id)
-                self._dump_list('compute', 'v1', 'targetHttpsProxies', project_id)
-                self._dump_list('compute', 'v1', 'targetSslProxies', project_id)
-                self._dump_list('compute', 'v1', 'targetTcpProxies', project_id)
-                self._dump_list('compute', 'v1', 'urlMaps', project_id)
-                self._dump_list('compute', 'v1', 'zones', project_id)
-
-            except HttpError as e:
-                if e.resp.status == 403:
-                    logger.info(f'Compute api not enabled for {project_id}')
-                else:
-                    raise e
-
-            if True:
-                logger.info(f'Crawling resource manager for {project_id} ...')
-                self._dump_constaints(project_id)
+            self._crawl_compute(project_id)
+            self._crawl_resourcemanager(project_id)
 
         self._get_missing_resources()
         self._store_resources()
+
+    def _crawl_compute(self, project_id):
+        try:
+            logger.info(f'Crawling compute for {project_id} ...')
+            self._dump_project_info(project_id)
+            self._dump_aggregated_list('compute', 'v1', 'acceleratorTypes', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'addresses', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'autoscalers', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'backendServices', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'disks', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'diskTypes', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'forwardingRules', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'globalOperations', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'instanceGroupManagers', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'instanceGroups', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'instances', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'interconnectAttachments', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'machineTypes', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'networkEndpointGroups', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'nodeGroups', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'nodeTemplates', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'nodeTypes', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'regionCommitments', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'reservations', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'resourcePolicies', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'routers', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'subnetworks', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'targetInstances', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'targetPools', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'targetVpnGateways', project_id)
+            self._dump_aggregated_list('compute', 'v1', 'vpnTunnels', project_id)
+
+            self._dump_list('compute', 'v1', 'backendBuckets', project_id)
+            self._dump_list('compute', 'v1', 'firewalls', project_id)
+            self._dump_list('compute', 'v1', 'globalAddresses', project_id)
+            self._dump_list('compute', 'v1', 'globalForwardingRules', project_id)
+            self._dump_list('compute', 'v1', 'healthChecks', project_id)
+            self._dump_list('compute', 'v1', 'httpHealthChecks', project_id)
+            self._dump_list('compute', 'v1', 'httpsHealthChecks', project_id)
+            self._dump_list('compute', 'v1', 'images', project_id)
+            self._dump_list('compute', 'v1', 'instanceTemplates', project_id)
+            self._dump_list('compute', 'v1', 'interconnectLocations', project_id)
+            self._dump_list('compute', 'v1', 'interconnects', project_id)
+            self._dump_list('compute', 'v1', 'licenses', project_id)
+            self._dump_list('compute', 'v1', 'networks', project_id)
+            self._dump_list('compute', 'v1', 'regions', project_id)
+            self._dump_list('compute', 'v1', 'routes', project_id)
+            self._dump_list('compute', 'v1', 'securityPolicies', project_id)
+            self._dump_list('compute', 'v1', 'snapshots', project_id)
+            self._dump_list('compute', 'v1', 'sslCertificates', project_id)
+            self._dump_list('compute', 'v1', 'sslPolicies', project_id)
+            self._dump_list('compute', 'v1', 'targetHttpProxies', project_id)
+            self._dump_list('compute', 'v1', 'targetHttpsProxies', project_id)
+            self._dump_list('compute', 'v1', 'targetSslProxies', project_id)
+            self._dump_list('compute', 'v1', 'targetTcpProxies', project_id)
+            self._dump_list('compute', 'v1', 'urlMaps', project_id)
+            self._dump_list('compute', 'v1', 'zones', project_id)
+
+        except HttpError as e:
+            if e.resp.status == 403:
+                logger.info(f'Compute api not enabled for {project_id}')
+            else:
+                raise e
+
+    def _crawl_resourcemanager(self, project_id):
+        logger.info(f'Crawling resource manager for {project_id} ...')
+        self._dump_constaints(project_id)
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -397,8 +398,3 @@ class CrawlGcp:
         if version not in self._services[service]:
             self._services[service][version] = build(service, version, credentials=self._creds)
         return self._services[service][version]
-
-
-if __name__ == '__main__':
-    crawler = CrawlGcp(credentials_file='credentials.json', output_dir='data')
-    crawler.crawl()
