@@ -124,6 +124,7 @@ class CrawlGcp:
     def _crawl_resourcemanager(self, project_id):
         logger.info(f'Crawling resource manager for {project_id} ...')
         self._dump_constaints(project_id)
+        self._dump_liens(project_id)
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -350,6 +351,21 @@ class CrawlGcp:
                     constraint[key] = value
             constraints[name] = constraint
         self._dump_json(project_id, service='cloudresourcemanager', method='listEffectiveOrgPolicies', data=constraints)
+
+    def _dump_liens(self, project_id):
+        service = self._get_service('cloudresourcemanager', 'v1')
+        next_page_token = None
+        liens = []
+        resource = f'projects/{project_id}'
+        while True:
+            response = service.liens().list(parent=resource, pageToken=next_page_token).execute()
+            if 'liens' in response:
+                liens += response['liens']
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                break
+        self._dump_json(project_id, service='cloudresourcemanager', method='listLiens', data=liens)
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:
