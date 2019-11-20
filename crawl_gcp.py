@@ -26,18 +26,19 @@ class CrawlGcp:
         self._resources = {}
         self._all_links = set()
         self._output_dir = output_dir
-        self._organization = None
+        self._organization_id = None
         self._projects = []
+        self._folders = []
 
     def scan_organization(self, organization_id):
-        self._organization = organization_id
+        self._organization_id = organization_id
 
     def scan_projects(self, projects):
         self._projects = projects
 
     def crawl(self):
         projects = []
-        if self._organization:
+        if self._organization_id:
             projects += self._get_projects_by_organization()
         if self._projects:
             projects += self._get_requested_projects()
@@ -54,7 +55,9 @@ class CrawlGcp:
             logger.info(f'[{i}/{total}] Fetching resources for {project_id} ...')
             self._crawl_compute(project_id)
             self._crawl_resourcemanager(project_id)
+            self._crawl_iam(project_id)
 
+        self._get_folder_and_org_iam()
         self._get_missing_resources()
         self._store_resources()
 
@@ -125,6 +128,11 @@ class CrawlGcp:
         logger.info(f'Crawling resource manager for {project_id} ...')
         self._dump_constaints(project_id)
         self._dump_liens(project_id)
+        self._dump_projectIamPolicies(project_id)
+
+    def _crawl_iam(self, project_id):
+        logger.info(f'Crawling iam for {project_id} ...')
+        self._dump_serviceaccounts(project_id)
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -171,23 +179,23 @@ class CrawlGcp:
 
     def _get_projects_by_organization(self):
         projects = []
-        logger.info(f'Finding projects in organization {self._organization}...')
+        logger.info(f'Finding projects in organization {self._organization_id}...')
 
-        org_resource = f'organizations/{self._organization}'
+        org_resource = f'organizations/{self._organization_id}'
         resourcemanager_v1 = self._get_service('cloudresourcemanager', 'v1')
         try:
             response = resourcemanager_v1.organizations().get(name=org_resource).execute()
         except HttpError as e:
             if e.resp.status == 403:
-                logger.warning(f'Not allowed to crawl organization {self._organization}')
+                logger.warning(f'Not allowed to crawl organization {self._organization_id}')
             elif e.resp.status == 404:
-                logger.warning(f'Could not find organization {self._organization}')
+                logger.warning(f'Could not find organization {self._organization_id}')
             else:
                 raise e
             return projects
         self._dump_json('organization', data=response)
 
-        folders = []
+        self._folders = []
         resourcemanager_v2 = self._get_service('cloudresourcemanager', 'v2')
         try:
             backlog = [org_resource]
@@ -198,7 +206,7 @@ class CrawlGcp:
                     response = resourcemanager_v2.folders().list(parent=next_item, pageToken=next_page_token).execute()
                     for folder in response.get('folders', []):
                         if folder['lifecycleState'] == 'ACTIVE':
-                            folders.append(folder)
+                            self._folders.append(folder)
                             backlog.append(folder['name'])
                     if 'nextPageToken' in response:
                         next_page_token = response['nextPageToken']
@@ -206,15 +214,15 @@ class CrawlGcp:
                         break
         except HttpError as e:
             if e.resp.status == 403:
-                logger.warning(f'Not allowed to list folders in organization {self._organization}')
+                logger.warning(f'Not allowed to list folders in organization {self._organization_id}')
             else:
                 raise e
-        self._dump_json('folders', data=folders)
+        self._dump_json('folders', data=self._folders)
 
         filters = [
-            f'parent.type:organization parent.id:{self._organization}'
+            f'parent.type:organization parent.id:{self._organization_id}'
         ]
-        for folder in folders:
+        for folder in self._folders:
             folder_id = folder['name'].split('/')[1]
             folder_filter = f'parent.type:folder parent.id:{folder_id}'
             filters.append(folder_filter)
@@ -366,6 +374,60 @@ class CrawlGcp:
             else:
                 break
         self._dump_json(project_id, service='cloudresourcemanager', method='listLiens', data=liens)
+
+    def _dump_projectIamPolicies(self, project_id):
+        service = self._get_service('cloudresourcemanager', 'v1')
+        response = service.projects().getIamPolicy(resource=project_id, body={}).execute()
+        bindings = response.get('bindings', [])
+        self._dump_json(project_id, service='cloudresourcemanager', method='getIamPolicies', data=bindings)
+
+    def _get_folder_and_org_iam(self):
+        if self._organization_id:
+            service_v1 = self._get_service('cloudresourcemanager', 'v1')
+            try:
+                resource = f'organizations/{self._organization_id}'
+                response = service_v1.organizations().getIamPolicy(resource=resource, body={}).execute()
+                bindings = response.get('bindings', [])
+                self._dump_json(f'organization_{self._organization_id}', service='cloudresourcemanager', method='getIamPolicies', data=bindings)
+            except HttpError as e:
+                if e.resp.status == 403:
+                    logger.warning(f'Not allowed to get iamPolicies for organization {self._organization_id}')
+                else:
+                    raise e
+        if self._folders:
+            service_v2 = self._get_service('cloudresourcemanager', 'v2')
+            for folder in self._folders:
+                try:
+                    folder_id = folder['name'].split('/')[1]
+                    response = service_v2.folders().getIamPolicy(resource=folder['name'], body={}).execute()
+                    bindings = response.get('bindings', [])
+                    self._dump_json(f'folder_{folder_id}', service='cloudresourcemanager', method='getIamPolicies', data=bindings)
+                except HttpError as e:
+                    if e.resp.status == 403:
+                        logger.warning(f'Not allowed to get iamPolicies for folder {folder_id}')
+                    else:
+                        raise e
+
+    def _dump_serviceaccounts(self, project_id):
+        service = self._get_service('iam', 'v1')
+        next_page_token = None
+        serviceaccounts = []
+        resource = f'projects/{project_id}'
+        while True:
+            response = service.projects().serviceAccounts().list(name=resource, pageToken=next_page_token).execute()
+            if 'accounts' in response:
+                serviceaccounts += response['accounts']
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                break
+        self._dump_json(project_id, service='iam', method='listServiceAccounts', data=serviceaccounts)
+
+        for sa in serviceaccounts:
+            response = service.projects().serviceAccounts().keys().list(name=sa['name']).execute()
+            keys = response.get('keys', [])
+            sa_name = sa['name'].split('/')[-1]
+            self._dump_json(project_id, service='iam', method=f'{sa_name}.keys', data=keys)
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:

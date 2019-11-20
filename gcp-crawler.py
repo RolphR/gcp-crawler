@@ -15,6 +15,7 @@ def get_credentials(source='application-default'):
         scope = [
             'https://www.googleapis.com/auth/cloud-platform.read-only',
             'https://www.googleapis.com/auth/compute.readonly',
+            'https://www.googleapis.com/auth/iam',
         ]
         return ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
 
