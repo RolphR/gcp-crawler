@@ -13,6 +13,7 @@ def get_credentials(source='application-default'):
     elif source == 'service-account':
         from oauth2client.service_account import ServiceAccountCredentials
         scope = [
+            'https://www.googleapis.com/auth/bigquery.readonly',
             'https://www.googleapis.com/auth/cloud-platform.read-only',
             'https://www.googleapis.com/auth/compute.readonly',
             'https://www.googleapis.com/auth/devstorage.full_control',

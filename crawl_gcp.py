@@ -29,6 +29,7 @@ class CrawlGcp:
         self._organization_id = None
         self._projects = []
         self._folders = []
+        self._datasets = []
 
     def scan_organization(self, organization_id):
         self._organization_id = organization_id
@@ -57,6 +58,7 @@ class CrawlGcp:
             self._crawl_resourcemanager(project_id)
             self._crawl_iam(project_id)
             self._crawl_storage(project_id)
+            self._crawl_bigquery(project_id)
 
         self._get_folder_and_org_iam()
         self._get_missing_resources()
@@ -138,6 +140,12 @@ class CrawlGcp:
     def _crawl_storage(self, project_id):
         logger.info(f'Crawling storage for {project_id} ...')
         self._dump_storage(project_id)
+
+    def _crawl_bigquery(self, project_id):
+        logger.info(f'Crawling bigquery for {project_id} ...')
+        self._dump_datasets(project_id)
+        self._dump_tables(project_id)
+        self._datasets = []
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -452,12 +460,72 @@ class CrawlGcp:
         for bucket in buckets:
             try:
                 response = service.buckets().getIamPolicy(bucket=bucket['name']).execute()
-                self._dump_json(project_id, service='storage', method=f'{bucket["name"]}.getIamPolicy', data=response)
+                self._dump_json(project_id, service='storage', method=f'bucket.{bucket["name"]}.getIamPolicy', data=response)
             except HttpError as e:
                 if e.resp.status == 403:
                     logger.warning(f'Not allowed to get iamPolicies for bucket {bucket["name"]}')
                 else:
                     raise e
+
+    def _dump_datasets(self, project_id):
+        try:
+            service = self._get_service('bigquery', 'v2')
+            next_page_token = None
+            self._datasets = []
+            while True:
+                response = service.datasets().list(projectId=project_id, pageToken=next_page_token).execute()
+                if 'datasets' in response:
+                    self._datasets += response['datasets']
+                if 'nextPageToken' in response:
+                    next_page_token = response['nextPageToken']
+                else:
+                    break
+            self._dump_json(project_id, service='bigquery', method='listDatasets', data=self._datasets)
+        except HttpError as e:
+            if e.resp.status == 400:
+                logger.info(f'Bigquery not enabled for {project_id}')
+                return
+            else:
+                raise e
+
+        for dataset in self._datasets:
+            try:
+                dataset_id = dataset['datasetReference']['datasetId']
+                response = service.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
+                self._dump_json(project_id, service='bigquery', method=f'dataset.{dataset_id}', data=response)
+            except HttpError as e:
+                if e.resp.status == 403:
+                    logger.warning(f'Not allowed to get dataset {dataset_id}')
+                else:
+                    raise e
+
+    def _dump_tables(self, project_id):
+        service = self._get_service('bigquery', 'v2')
+
+        for dataset in self._datasets:
+            dataset_id = dataset['datasetReference']['datasetId']
+            next_page_token = None
+            tables = []
+            while True:
+                response = service.tables().list(projectId=project_id, datasetId=dataset_id, pageToken=next_page_token).execute()
+                if 'tables' in response:
+                    tables += response['tables']
+                if 'nextPageToken' in response:
+                    next_page_token = response['nextPageToken']
+                else:
+                    break
+            self._dump_json(project_id, service='bigquery', method=f'tableList.{dataset_id}', data=tables)
+
+            for table in tables:
+                try:
+                    table_id = table['tableReference']['tableId']
+                    response = service.tables().get(projectId=project_id, datasetId=dataset_id, tableId=table_id).execute()
+                    self._dump_json(project_id, service='bigquery', method=f'table.{dataset_id}.{table_id}', data=response)
+                except HttpError as e:
+                    if e.resp.status == 403:
+                        logger.warning(f'Not allowed to get table {table_id} in dataset {dataset_id}')
+                    else:
+                        raise e
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:
