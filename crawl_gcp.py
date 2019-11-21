@@ -56,6 +56,7 @@ class CrawlGcp:
             self._crawl_compute(project_id)
             self._crawl_resourcemanager(project_id)
             self._crawl_iam(project_id)
+            self._crawl_storage(project_id)
 
         self._get_folder_and_org_iam()
         self._get_missing_resources()
@@ -133,6 +134,10 @@ class CrawlGcp:
     def _crawl_iam(self, project_id):
         logger.info(f'Crawling iam for {project_id} ...')
         self._dump_serviceaccounts(project_id)
+
+    def _crawl_storage(self, project_id):
+        logger.info(f'Crawling storage for {project_id} ...')
+        self._dump_storage(project_id)
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -428,6 +433,31 @@ class CrawlGcp:
             keys = response.get('keys', [])
             sa_name = sa['name'].split('/')[-1]
             self._dump_json(project_id, service='iam', method=f'{sa_name}.keys', data=keys)
+
+    def _dump_storage(self, project_id):
+        service = self._get_service('storage', 'v1')
+        next_page_token = None
+        buckets = []
+        resource = f'projects/{project_id}'
+        while True:
+            response = service.buckets().list(project=project_id, pageToken=next_page_token, projection='full').execute()
+            if 'items' in response:
+                buckets += response['items']
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                break
+        self._dump_json(project_id, service='storage', method='listBuckets', data=buckets)
+
+        for bucket in buckets:
+            try:
+                response = service.buckets().getIamPolicy(bucket=bucket['name']).execute()
+                self._dump_json(project_id, service='storage', method=f'{bucket["name"]}.getIamPolicy', data=response)
+            except HttpError as e:
+                if e.resp.status == 403:
+                    logger.warning(f'Not allowed to get iamPolicies for bucket {bucket["name"]}')
+                else:
+                    raise e
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:
