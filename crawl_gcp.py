@@ -506,14 +506,20 @@ class CrawlGcp:
             dataset_id = dataset['datasetReference']['datasetId']
             next_page_token = None
             tables = []
-            while True:
-                response = service.tables().list(projectId=project_id, datasetId=dataset_id, pageToken=next_page_token).execute()
-                if 'tables' in response:
-                    tables += response['tables']
-                if 'nextPageToken' in response:
-                    next_page_token = response['nextPageToken']
+            try:
+                while True:
+                    response = service.tables().list(projectId=project_id, datasetId=dataset_id, pageToken=next_page_token).execute()
+                    if 'tables' in response:
+                        tables += response['tables']
+                    if 'nextPageToken' in response:
+                        next_page_token = response['nextPageToken']
+                    else:
+                        break
+            except HttpError as e:
+                if e.resp.status == 403:
+                    logger.warning(f'Not allowed to list tables in dataset {dataset_id}')
                 else:
-                    break
+                    raise e
             self._dump_json(project_id, service='bigquery', method=f'tableList.{dataset_id}', data=tables)
 
             for table in tables:
