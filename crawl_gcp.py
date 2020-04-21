@@ -68,6 +68,8 @@ class CrawlGcp:
                 self._crawl_storage(project_id)
             if 'bigquery' in enabled_services:
                 self._crawl_bigquery(project_id)
+            if 'deploymentmanager' in enabled_services:
+                self._crawl_deploymentmanager(project_id)
 
         self._get_folder_and_org_iam()
         self._get_missing_resources()
@@ -195,6 +197,10 @@ class CrawlGcp:
         self._dump_datasets(project_id)
         self._dump_tables(project_id)
         self._datasets = []
+
+    def _crawl_deploymentmanager(self, project_id):
+        logger.info(f'Crawling deploymentmanager for {project_id} ...')
+        self._dump_deployments(project_id)
 
     def _get_missing_resources(self):
         missing_resources = []
@@ -340,7 +346,6 @@ class CrawlGcp:
         service = self._get_service('compute', 'v1')
         response = service.projects().get(project=project).execute()
         if 'selfLink' in response:
-            self._resources[response['selfLink']] = response
             self._collect_all_links(response)
         self._dump_json(project, service='compute', method='get', data=response)
 
@@ -349,7 +354,6 @@ class CrawlGcp:
         for resource_list in data.values():
             for resource in resource_list:
                 if 'selfLink' in resource:
-                    self._resources[resource['selfLink']] = resource
                     self._collect_all_links(resource)
         self._dump_json(project, service='compute', method=method, data=data)
 
@@ -375,7 +379,6 @@ class CrawlGcp:
         data = self._get_list(service_name, version, method, project)
         for resource in data:
             if 'selfLink' in resource:
-                self._resources[resource['selfLink']] = resource
                 self._collect_all_links(resource)
         self._dump_json(project, service=service_name, method=method, data=data)
         return data
@@ -399,7 +402,6 @@ class CrawlGcp:
         data = self._get_region_list(service_name, version, method, project)
         for resource in data:
             if 'selfLink' in resource:
-                self._resources[resource['selfLink']] = resource
                 self._collect_all_links(resource)
         self._dump_json(project, service=service_name, method=method, data=data)
         return data
@@ -424,7 +426,6 @@ class CrawlGcp:
         data = self._get_zone_list(service_name, version, method, project)
         for resource in data:
             if 'selfLink' in resource:
-                self._resources[resource['selfLink']] = resource
                 self._collect_all_links(resource)
         self._dump_json(project, service=service_name, method=method, data=data)
         return data
@@ -454,6 +455,7 @@ class CrawlGcp:
             response = service.projects().locations().clusters().list(parent=parent).execute()
             if response:
                 clusters[region_name] = response
+        self._collect_all_links(clusters)
         self._dump_json(project_id, service='container', method='projectsLocationsClustersList', data=clusters)
 
     def _dump_constaints(self, project_id):
@@ -484,6 +486,7 @@ class CrawlGcp:
                 if key != 'constraint':
                     constraint[key] = value
             constraints[name] = constraint
+        self._collect_all_links(constraints)
         self._dump_json(project_id, service='cloudresourcemanager', method='listEffectiveOrgPolicies', data=constraints)
 
     def _dump_liens(self, project_id):
@@ -499,12 +502,14 @@ class CrawlGcp:
                 next_page_token = response['nextPageToken']
             else:
                 break
+        self._collect_all_links(liens)
         self._dump_json(project_id, service='cloudresourcemanager', method='listLiens', data=liens)
 
     def _dump_projectIamPolicies(self, project_id):
         service = self._get_service('cloudresourcemanager', 'v1')
         response = service.projects().getIamPolicy(resource=project_id, body={}).execute()
         bindings = response.get('bindings', [])
+        self._collect_all_links(bindings)
         self._dump_json(project_id, service='cloudresourcemanager', method='getIamPolicies', data=bindings)
 
     def _get_folder_and_org_iam(self):
@@ -514,6 +519,7 @@ class CrawlGcp:
                 resource = f'organizations/{self._organization_id}'
                 response = service_v1.organizations().getIamPolicy(resource=resource, body={}).execute()
                 bindings = response.get('bindings', [])
+                self._collect_all_links(bindings)
                 self._dump_json(f'organization_{self._organization_id}', service='cloudresourcemanager', method='getIamPolicies', data=bindings)
             except HttpError as e:
                 if e.resp.status == 403:
@@ -527,6 +533,7 @@ class CrawlGcp:
                     folder_id = folder['name'].split('/')[1]
                     response = service_v2.folders().getIamPolicy(resource=folder['name'], body={}).execute()
                     bindings = response.get('bindings', [])
+                    self._collect_all_links(bindings)
                     self._dump_json(f'folder_{folder_id}', service='cloudresourcemanager', method='getIamPolicies', data=bindings)
                 except HttpError as e:
                     if e.resp.status == 403:
@@ -547,12 +554,14 @@ class CrawlGcp:
                 next_page_token = response['nextPageToken']
             else:
                 break
+        self._collect_all_links(serviceaccounts)
         self._dump_json(project_id, service='iam', method='listServiceAccounts', data=serviceaccounts)
 
         for sa in serviceaccounts:
             response = service.projects().serviceAccounts().keys().list(name=sa['name']).execute()
             keys = response.get('keys', [])
             sa_name = sa['name'].split('/')[-1]
+            self._collect_all_links(keys)
             self._dump_json(project_id, service='iam', method=f'{sa_name}.keys', data=keys)
 
     def _dump_storage(self, project_id):
@@ -568,6 +577,7 @@ class CrawlGcp:
                 next_page_token = response['nextPageToken']
             else:
                 break
+        self._collect_all_links(buckets)
         self._dump_json(project_id, service='storage', method='listBuckets', data=buckets)
 
         for bucket in buckets:
@@ -593,6 +603,7 @@ class CrawlGcp:
                     next_page_token = response['nextPageToken']
                 else:
                     break
+            self._collect_all_links(self._datasets)
             self._dump_json(project_id, service='bigquery', method='listDatasets', data=self._datasets)
         except HttpError as e:
             if e.resp.status == 400:
@@ -605,6 +616,7 @@ class CrawlGcp:
             try:
                 dataset_id = dataset['datasetReference']['datasetId']
                 response = service.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
+                self._collect_all_links(response)
                 self._dump_json(project_id, service='bigquery', method=f'dataset.{dataset_id}', data=response)
             except HttpError as e:
                 if e.resp.status == 403:
@@ -633,18 +645,50 @@ class CrawlGcp:
                     logger.warning(f'Not allowed to list tables in dataset {dataset_id}')
                 else:
                     raise e
+            self._collect_all_links(tables)
             self._dump_json(project_id, service='bigquery', method=f'tableList.{dataset_id}', data=tables)
 
             for table in tables:
                 try:
                     table_id = table['tableReference']['tableId']
                     response = service.tables().get(projectId=project_id, datasetId=dataset_id, tableId=table_id).execute()
+                    self._collect_all_links(response)
                     self._dump_json(project_id, service='bigquery', method=f'table.{dataset_id}.{table_id}', data=response)
                 except HttpError as e:
                     if e.resp.status == 403:
                         logger.warning(f'Not allowed to get table {table_id} in dataset {dataset_id}')
                     else:
                         raise e
+
+    def _dump_deployments(self, project_id):
+        service = self._get_service('deploymentmanager', 'v2')
+        next_page_token = None
+        deployments = []
+        while True:
+            response = service.deployments().list(project=project_id, pageToken=next_page_token).execute()
+            if 'deployments' in response:
+                deployments += response['deployments']
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                break
+        self._collect_all_links(deployments)
+        self._dump_json(project_id, service='deploymentmanager', method='listDeployments', data=deployments)
+
+        for deployment in deployments:
+            deployment_name = deployment['name']
+            next_page_token = None
+            manifests = []
+            while True:
+                response = service.manifests().list(project=project_id, deployment=deployment_name, pageToken=next_page_token).execute()
+                if 'manifests' in response:
+                    manifests += response['manifests']
+                if 'nextPageToken' in response:
+                    next_page_token = response['nextPageToken']
+                else:
+                    break
+            self._collect_all_links(manifests)
+            self._dump_json(project_id, service='deploymentmanager', method=f'manifests.{deployment_name}', data=manifests)
 
     def _store_resources(self):
         with open(f'{self._output_dir}/resources.json', 'w') as f:
@@ -655,6 +699,8 @@ class CrawlGcp:
             resources = resource
         elif type(resource) == dict:
             resources = resource.values()
+            if resource.get('selfLink'):
+                self._resources[resource['selfLink']] = resource
         else:
             raise Exception('must be dict or list')
 
