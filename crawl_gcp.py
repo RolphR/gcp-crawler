@@ -19,8 +19,8 @@ logger.addHandler(ch)
 class CrawlGcp:
     def __init__(self, credentials, output_dir):
         self._services = {}
-        self._zones = {}
-        self._regions = {}
+        self._zones = []
+        self._regions = []
         self._creds = credentials
         self._authorized_http = authorized_http(self._creds)
         self._resources = {}
@@ -53,21 +53,68 @@ class CrawlGcp:
         for project in projects:
             i += 1
             project_id= project['projectId']
+            enabled_services = self._get_and_dump_enabled_services(project_id)
+
             logger.info(f'[{i}/{total}] Fetching resources for {project_id} ...')
-            self._crawl_compute(project_id)
             self._crawl_resourcemanager(project_id)
-            self._crawl_iam(project_id)
-            self._crawl_storage(project_id)
-            self._crawl_bigquery(project_id)
+
+            if 'compute' in enabled_services:
+                self._crawl_compute(project_id)
+            if 'container' in enabled_services:
+                self._crawl_container(project_id)
+            if 'iam' in enabled_services:
+                self._crawl_iam(project_id)
+            if 'storage-component' in enabled_services:
+                self._crawl_storage(project_id)
+            if 'bigquery' in enabled_services:
+                self._crawl_bigquery(project_id)
 
         self._get_folder_and_org_iam()
         self._get_missing_resources()
         self._store_resources()
 
+    def _get_and_dump_enabled_services(self, project_id):
+        logger.info(f'Fetching all enabled services for project {project_id}...')
+        serviceusage = self._get_service('serviceusage', 'v1')
+        resource = f'projects/{project_id}'
+        next_page_token = None
+        services = []
+        while True:
+            response = serviceusage.services().list(parent=resource, pageToken=next_page_token, filter='state:ENABLED').execute()
+            services.extend(response.get('services', []))
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                break
+        self._dump_json(project_id, service='serviceusage', method='list', data=services)
+        enabled_services = set()
+        for service in services:
+            service_name = service['config']['name'].split('.googleapis.com')[0]
+            enabled_services.add(service_name)
+        return enabled_services
+
     def _crawl_compute(self, project_id):
         try:
             logger.info(f'Crawling compute for {project_id} ...')
             self._dump_project_info(project_id)
+
+            self._regions = self._dump_list('compute', 'v1', 'regions', project_id)
+            self._dump_region_list('compute', 'v1', 'regionAutoscalers', project_id)
+            self._dump_region_list('compute', 'v1', 'regionBackendServices', project_id)
+            self._dump_region_list('compute', 'v1', 'regionDiskTypes', project_id)
+            self._dump_region_list('compute', 'v1', 'regionDisks', project_id)
+            self._dump_region_list('compute', 'v1', 'regionHealthChecks', project_id)
+            self._dump_region_list('compute', 'v1', 'regionInstanceGroupManagers', project_id)
+            self._dump_region_list('compute', 'v1', 'regionInstanceGroups', project_id)
+            self._dump_region_list('compute', 'v1', 'regionOperations', project_id)
+            self._dump_region_list('compute', 'v1', 'regionSslCertificates', project_id)
+            self._dump_region_list('compute', 'v1', 'regionTargetHttpProxies', project_id)
+            self._dump_region_list('compute', 'v1', 'regionTargetHttpsProxies', project_id)
+            self._dump_region_list('compute', 'v1', 'regionUrlMaps', project_id)
+
+            self._zones = self._dump_list('compute', 'v1', 'zones', project_id)
+            self._dump_zone_list('compute', 'v1', 'zoneOperations', project_id)
+
             self._dump_aggregated_list('compute', 'v1', 'acceleratorTypes', project_id)
             self._dump_aggregated_list('compute', 'v1', 'addresses', project_id)
             self._dump_aggregated_list('compute', 'v1', 'autoscalers', project_id)
@@ -108,7 +155,6 @@ class CrawlGcp:
             self._dump_list('compute', 'v1', 'interconnects', project_id)
             self._dump_list('compute', 'v1', 'licenses', project_id)
             self._dump_list('compute', 'v1', 'networks', project_id)
-            self._dump_list('compute', 'v1', 'regions', project_id)
             self._dump_list('compute', 'v1', 'routes', project_id)
             self._dump_list('compute', 'v1', 'securityPolicies', project_id)
             self._dump_list('compute', 'v1', 'snapshots', project_id)
@@ -119,13 +165,16 @@ class CrawlGcp:
             self._dump_list('compute', 'v1', 'targetSslProxies', project_id)
             self._dump_list('compute', 'v1', 'targetTcpProxies', project_id)
             self._dump_list('compute', 'v1', 'urlMaps', project_id)
-            self._dump_list('compute', 'v1', 'zones', project_id)
 
         except HttpError as e:
             if e.resp.status == 403:
                 logger.info(f'Compute api not enabled for {project_id}')
             else:
                 raise e
+
+    def _crawl_container(self, project_id):
+        logger.info(f'Crawling kubernetes engine for {project_id} ...')
+        self._dump_container_clusters(project_id)
 
     def _crawl_resourcemanager(self, project_id):
         logger.info(f'Crawling resource manager for {project_id} ...')
@@ -305,6 +354,7 @@ class CrawlGcp:
         self._dump_json(project, service='compute', method=method, data=data)
 
     def _get_aggregated_list(self, service_name, version, method, project):
+        logger.info(f'Fetching {service_name}.{version}.{method} for {project}...')
         service = self._get_service(service_name, version)
         next_page_token = None
         aggregated_list = {}
@@ -328,8 +378,10 @@ class CrawlGcp:
                 self._resources[resource['selfLink']] = resource
                 self._collect_all_links(resource)
         self._dump_json(project, service=service_name, method=method, data=data)
+        return data
 
     def _get_list(self, service_name, version, method, project):
+        logger.info(f'Fetching {service_name}.{version}.{method} for {project}...')
         service = self._get_service(service_name, version)
         next_page_token = None
         data = []
@@ -342,6 +394,67 @@ class CrawlGcp:
             else:
                 break
         return data
+
+    def _dump_region_list(self, service_name, version, method, project):
+        data = self._get_region_list(service_name, version, method, project)
+        for resource in data:
+            if 'selfLink' in resource:
+                self._resources[resource['selfLink']] = resource
+                self._collect_all_links(resource)
+        self._dump_json(project, service=service_name, method=method, data=data)
+        return data
+
+    def _get_region_list(self, service_name, version, method, project):
+        logger.info(f'Fetching {service_name}.{version}.{method} for {project}...')
+        service = self._get_service(service_name, version)
+        data = []
+        for region in self._regions:
+            next_page_token = None
+            while True:
+                response = getattr(service, method)().list(project=project, region=region['name'], pageToken=next_page_token).execute()
+                if 'items' in response:
+                    data += response['items']
+                if 'nextPageToken' in response:
+                    next_page_token = response['nextPageToken']
+                else:
+                    break
+        return data
+
+    def _dump_zone_list(self, service_name, version, method, project):
+        data = self._get_zone_list(service_name, version, method, project)
+        for resource in data:
+            if 'selfLink' in resource:
+                self._resources[resource['selfLink']] = resource
+                self._collect_all_links(resource)
+        self._dump_json(project, service=service_name, method=method, data=data)
+        return data
+
+    def _get_zone_list(self, service_name, version, method, project):
+        logger.info(f'Fetching {service_name}.{version}.{method} for {project}...')
+        service = self._get_service(service_name, version)
+        data = []
+        for zone in self._zones:
+            next_page_token = None
+            while True:
+                response = getattr(service, method)().list(project=project, zone=zone['name'], pageToken=next_page_token).execute()
+                if 'items' in response:
+                    data += response['items']
+                if 'nextPageToken' in response:
+                    next_page_token = response['nextPageToken']
+                else:
+                    break
+        return data
+
+    def _dump_container_clusters(self, project_id):
+        service = self._get_service('container', 'v1')
+        clusters = {}
+        for region in self._regions:
+            region_name = region['name']
+            parent = f'projects/{project_id}/locations/{region_name}'
+            response = service.projects().locations().clusters().list(parent=parent).execute()
+            if response:
+                clusters[region_name] = response
+        self._dump_json(project_id, service='container', method='projectsLocationsClustersList', data=clusters)
 
     def _dump_constaints(self, project_id):
         service = self._get_service('cloudresourcemanager', 'v1')
